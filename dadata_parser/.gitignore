@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+.env
+data/*.db
+data/*.log
+data/*.jsonl
+data/enriched.xlsx
+data/*.xlsx
+data/token_usage_*.log
+config.yaml
+!config.yaml.example
+.DS_Store
+*.tmp
