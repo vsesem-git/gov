@@ -1,13 +1,131 @@
-# Dadata Parser — отдельный проект
+# DaData Parser — простой запуск GUI
 
-Парсер ЕГРЮЛ по ИНН через **DaData Find-Party** (`findById/party`) с:
-- **SOCKS5 прокси** `IP:PORT:LOGIN:PASS` (авторотация провайдера — менять не нужно, но поддерживается пул)
-- **Ротацией токенов**: до **10 000 запросов/сутки на 1 токен**, после — автопереключение на следующий
-- **Учётом расхода по токенам в сутки** — лог + SQLite + консоль
-- Настраиваемым пулом токенов и прокси через `config.yaml`
-- Resume по `JSONL`, Excel-обогащением и CLI/GUI
+**Двойной клик → вставили токены/прокси → Запустить. Без команд в cmd.**
 
-> Выделен из `scripts/enrich_dadata.py` + `DaData_GUI.py` ветки `arena/363bbf0c-gov`.
+Парсер ЕГРЮЛ по ИНН через DaData Find-Party с SOCKS5 прокси `IP:PORT:LOGIN:PASS` и ротацией токенов **10 000/сутки/токен**.
+
+---
+
+## 🚀 Самый простой запуск (Windows)
+
+1. Скачайте папку `dadata_parser` (или клонируйте репозиторий)
+2. Двойной клик по **`Запустить.bat`** (или `Запуск.py`)
+3. Откроется окно — вставьте токены, прокси уже вставлен пример, выберите файл → **Запустить**
+4. Всё установится само (первый запуск 30 сек)
+
+> Токены и прокси настраиваются **внутри окна** — никаких команд в консоли набирать не нужно.
+
+---
+
+## Что внутри окна
+
+```
+Шаг 1: Токены DaData  |  Шаг 2: Прокси  |  Шаг 3: Файл → Запустить
+─────────────────────────────────────────────────────────────────
+📦 Зависимости: [✅ всё есть]  или  [📦 Установить всё (1 клик)]
+
+Токены DaData (каждый до 10 000/сутки):
+┌─────────────────────────────────────┐
+│ 77eff8edd3640fc0002ad6ae2431261a2f38 │
+│ второй токен с новой строки         │
+└─────────────────────────────────────┘
+
+☑ SOCKS5 прокси  IP:PORT:LOGIN:PASS
+┌─────────────────────────────────────┐
+│ 95.78.126.13:14755:5nqb8nr:9cz93bt  │
+└─────────────────────────────────────┘
+
+Откуда ИНН: [📂 Выбрать]  Куда сохранить: [📂 Выбрать]
+
+[💾 Сохранить] [🧪 Тест прокси] [🧪 Тест токена]
+
+              [▶ ЗАПУСТИТЬ ПАРСИНГ]
+
+Расход сегодня: Всего 420/20000 (2.1%)
+  ████░░░░ 77eff8...2dfb: 420/10000 (4.2%)
+  ░░░░░░░░ a1b2c3...9f00: 0/10000 (0%)
+```
+
+- **Токены** — вставьте с новой строки, каждый даёт +10 000 запросов/сутки. Исчерпан → авто следующий. Маска `77eff8...2dfb`.
+- **Прокси** — формат `IP:PORT:LOGIN:PASS` (пример уже вставлен). 1 прокси с авторотацией достаточно. Можно выключить галочку.
+- **Файлы** — `.xlsx` с колонкой `ИНН` или `.txt/.csv/.jsonl` (каждый ИНН с новой строки). Поддержка drag&drop.
+- **Установка зависимостей** — если чего-то нет, сверху появится кнопка **📦 Установить всё (1 клик)** — зависимости ставятся прямо из GUI.
+- **Расход** — обновляется каждые 5 сек, также пишется в `data/parser.log`, `data/token_usage_2026-11-16.log` и SQLite `data/parser.db`.
+
+---
+
+## Файлы запуска
+
+| Файл | Что делает |
+|------|------------|
+| **`Запустить.bat`** | Windows: проверяет Python, запускает `Запуск.py` |
+| **`Запуск.py`** | Универсальный лаунчер: ставит `pip install -r requirements.txt` если нужно, создаёт `config.yaml`, открывает GUI |
+| **`Запустить.command`** | macOS/Linux: двойной клик |
+| `dadata_parser/gui/app.py` | Сама GUI — можно запустить `python -m dadata_parser --gui` |
+
+Никаких `cd`, `pip install`, `python -m` вручную — всё делает лаунчер.
+
+---
+
+## Настройка без консоли
+
+Все настройки — в окне, кнопка **💾 Сохранить** пишет в `config.yaml`:
+
+```yaml
+dadata:
+  tokens:
+    - "77eff8edd3640fc0002ad6ae2431261a2f382dfb"
+    # - "второй_токен"
+  daily_limit_per_token: 10000
+  delay_between_requests: 0.2
+proxy:
+  enabled: true
+  list:
+    - "95.78.126.13:14755:5nqb8nr:9cz93bt"
+```
+
+Также можно через ENV: `DADATA_TOKENS=token1,token2`.
+
+---
+
+## Логика ротации
+
+1. Берёт первый токен где `count < 10000`
+2. После каждого `200` ответа инкремент
+3. При `429` с `limit` в теле — помечает токен как исчерпанный
+4. Если все исчерпаны — `Все токены исчерпаны на сегодня (МСК)` → стоп до 00:00
+
+Статистика:
+```sql
+-- SQLite
+SELECT date, token_masked, count, limit_per_day FROM token_usage WHERE date='2026-11-16';
+```
+
+---
+
+## CLI (для продвинутых)
+
+```bash
+python Запуск.py                          # то же что двойной клик
+python -m dadata_parser --help
+python -m dadata_parser --input inns.txt
+python -m dadata_parser --input реест.xlsx --excel-output out.xlsx
+python -m dadata_parser --test --inn 5902290635 --test-proxy
+```
+
+---
+
+## Требования
+
+- Python 3.10+ (с галочкой Add to PATH)
+- Интернет + токен DaData (https://dadata.ru/profile/#info → API ключ)
+- Прокси (опционально, но на песочнице без него DaData блокирует — используйте пример `95.78.126.13:14755:5nqb8nr:9cz93bt`)
+
+Установка вручную (если лаунчер не сработал):
+```bash
+pip install -r requirements.txt
+python -m dadata_parser --gui
+```
 
 ---
 
@@ -15,200 +133,20 @@
 
 ```
 dadata_parser/
-  dadata_parser/
-    __init__.py
-    __main__.py        # CLI entry
-    config.py          # загрузка config.yaml / env
-    token_manager.py   # учёт 10к/сутки, ротация
-    proxy_manager.py   # SOCKS5 IP:PORT:LOGIN:PASS → socks5:// URL
-    dadata_client.py   # requests + SOCKS5 + ретраи
-    storage.py         # SQLite daily counters + JSONL
-    worker.py          # оркестратор (resume, прогресс, Excel)
-    gui/
-      app.py           # Tkinter GUI с настройками токенов/прокси
-  config.yaml.example  # пример настроек
-  config.yaml          # ваш локальный конфиг (gitignored)
+  Запустить.bat          ← двойной клик (Windows)
+  Запуск.py              ← двойной клик (универсально)
+  config.yaml            ← создаётся сам, редактируется из GUI
+  config.yaml.example
   requirements.txt
-  README.md
+  data/                  ← parser.db, parser.log, *.jsonl
+  dadata_parser/
+    config.py
+    token_manager.py     # 10k/сутки, SQLite
+    proxy_manager.py     # IP:PORT:LOGIN:PASS → socks5h://
+    dadata_client.py
+    storage.py
+    worker.py
+    gui/app.py           # Tkinter GUI с установкой зависимостей внутри
 ```
 
----
-
-## Установка
-
-```bash
-cd dadata_parser
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
-cp config.yaml.example config.yaml
-# отредактируйте config.yaml — вставьте токены и прокси
-```
-
----
-
-## Настройка `config.yaml`
-
-```yaml
-dadata:
-  tokens:
-    - "77eff8edd3640fc0002ad6ae2431261a2f382dfb"
-    - "второй_токен..."
-    - "третий_токен..."
-  daily_limit_per_token: 10000    # лимит DaData на ключ в сутки
-  timeout: 15
-  retries: 3
-  delay_between_requests: 0.2     # 0.2 = 5 req/s на прокси
-
-proxy:
-  enabled: true
-  # Формат: IP:PORT:LOGIN:PASS  (колонка-разделитель, 4 части)
-  # Также поддерживается IP:PORT;LOGIN:PASS
-  # Пул может быть 1 прокси с авторотацией — не обязательно много
-  list:
-    - "95.78.126.13:14755:5nqb8nr:9cz93bt"
-  rotation: "round_robin"        # round_robin | random | sticky
-  verify_ssl: true
-
-storage:
-  sqlite_path: "./data/parser.db"
-  raw_jsonl: "./data/dadata_raw.jsonl"
-  log_path: "./data/parser.log"
-
-output:
-  excel_template: null            # null = без обогащения Excel, или путь к входному xlsx
-  excel_output: "./data/enriched.xlsx"
-  save_raw_jsonl: true
-```
-
-Также токены можно передать через ENV:
-```bash
-DADATA_TOKENS="token1,token2,token3" python -m dadata_parser --input inn_list.txt
-```
-
----
-
-## Формат прокси
-
-Поддерживаются строки:
-
-```
-95.78.126.13:14755:5nqb8nr:9cz93bt      # IP:PORT:LOGIN:PASS
-95.78.126.13:14755;5nqb8nr;9cz93bt      # IP:PORT;LOGIN;PASS (альтернатива)
-95.78.126.13:14755                      # без авторизации (редко)
-```
-
-Конвертируется в `socks5h://LOGIN:PASS@IP:PORT` (через `PySocks` + `requests[socks]`).
-Авторотация провайдера = один прокси в списке достаточно, он сам меняет IP.
-
-Проверка прокси:
-```bash
-python -m dadata_parser --test-proxy
-```
-
----
-
-## Логика ротации токенов
-
-1. Каждый запрос требует токен.
-2. `TokenManager` хранит в SQLite `usage(token, date) -> count`.
-3. Перед запросом берёт первый токен у которого `count < daily_limit_per_token` (10к).
-4. После успешных запросов инкремент.
-5. При `429` или исчерпании — помечает токен на сегодня как exhausted, переключает на следующий.
-6. Если все токены исчерпаны — `AllTokensExhausted` → остановка с сообщением «лимит на сутки исчерпан, следующий слот в 00:00 МСК».
-
-### Лог расхода
-
-- Консоль (каждые 50 запросов + прогресс-бар):
-  ```
-  [12:34:56] token 77eff8...f382dfb: 420/10000 (4.2%) | токен2: 0/10000 | done 420/1500
-  ```
-- Файл `data/parser.log` (ротация).
-- SQLite `data/parser.db` таблица `token_usage(date, token_masked, count, limit)` — можно строить графики.
-- JSONL `data/dadata_raw.jsonl` — построчно `{inn, queried_at, token_masked, response}` для resume.
-
-Пример SQL:
-```sql
-SELECT date, substr(token,1,6)||'...' as token, count, limit FROM token_usage WHERE date='2026-11-16';
-```
-
----
-
-## CLI
-
-```bash
-# 1. Парс списка ИНН из txt/csv/xlsx
-python -m dadata_parser --input data/inns.txt --output data/out.jsonl
-
-# 2. Обогащение Excel (как в старом enrich_dadata.py) — добавляет 15 зелёных колонок
-python -m dadata_parser --input Администраций_городов_из_реестра_2026-11-10.xlsx --excel-output result.xlsx
-
-# 3. Тест 1 ИНН (Пермь)
-python -m dadata_parser --test --inn 5902290635
-
-# 4. Проверка прокси + токена
-python -m dadata_parser --test-proxy --test
-
-# 5. Указать токены через CLI
-python -m dadata_parser --tokens token1,token2 --proxy 95.78.126.13:14755:5nqb8nr:9cz93bt --input inns.txt
-
-# 6. GUI
-python -m dadata_parser --gui
-```
-
-Опции `--help` покажет все флаги.
-
----
-
-## GUI
-
-```bash
-python -m dadata_parser --gui
-# или
-python -m dadata_parser.gui.app
-```
-
-GUI позволяет:
-- Редактировать таблицу токенов (добавить/удалить, видеть остаток на сегодня)
-- Редактировать список прокси
-- Выбрать входной файл, задержку, resume
-- Видеть live-лог расхода по токенам
-- Тест прокси/токена в 1 клик
-
----
-
-## API: DaData Find-Party
-
-```
-POST https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party
-Headers: Authorization: Token <API_KEY>
-Body: {"query": "7707083893"}
-```
-
-Ответ → `suggestions[0].data` содержит `management.name`, `management.post`, `state.status`, `ogrn`, `address`, `okved`, `emails`, `phones` и т.д. Сохраняется сырой JSONL для дозабора любых полей без повторных запросов.
-
----
-
-## Лимиты и рекомендации
-
-- **10 000 / сутки / токен** — считать по Москве (DaData бьёт по календарным суткам).
-- `delay_between_requests: 0.2` — защита от 429 (5 r/s на прокси достаточно; при 429 — экспоненциальная пауза).
-- Resume: если прервали — повторный запуск продолжает с места (`JSONL` + `SQLite`).
-- Прокси с авторотацией — 1 строки достаточно; при пуле — `round_robin`.
-
----
-
-## Разработка
-
-```bash
-pip install -r requirements-dev.txt  # если есть
-pytest
-```
-
-Логи: `data/parser.log`, `data/token_usage_2026-11-16.log`
-
----
-
-## Лицензия
-
-MIT — выделили из внутреннего проекта Arena GIS.
+MIT — выделено из `scripts/enrich_dadata.py`.
