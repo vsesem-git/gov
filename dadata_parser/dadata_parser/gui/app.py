@@ -188,6 +188,21 @@ class App(tk.Tk):
         self.stop_btn.pack(fill="x", pady=(4,0))
         ttk.Label(left, text="Resume: при повторе продолжит с места (JSONL). Лимит 10к/сутки — переключает токен сам.", font=("Segoe UI",7), foreground="#888").pack(anchor="w", pady=(4,0))
 
+        # Выгрузка / Пересборка — прямо в GUI
+        export_frame=ttk.LabelFrame(left, text=" 📤 Выгрузка и пересборка ", padding=8)
+        export_frame.pack(fill="x", pady=(10,2))
+        ttk.Label(export_frame, text="Если Excel не создался — пересоберите из уже сохранённого JSONL без повторного парсинга:", font=("Segoe UI",7), foreground="#666", wraplength=420).pack(anchor="w")
+        row_exp1=ttk.Frame(export_frame)
+        row_exp1.pack(fill="x", pady=(6,2))
+        ttk.Button(row_exp1, text="🔄 Пересобрать Excel из JSONL", command=self.rebuild_excel).pack(side="left", fill="x", expand=True, padx=(0,4))
+        ttk.Button(row_exp1, text="📄 Выгрузить CSV", command=self.export_csv).pack(side="left", fill="x", expand=True, padx=(4,0))
+        row_exp2=ttk.Frame(export_frame)
+        row_exp2.pack(fill="x", pady=2)
+        ttk.Button(row_exp2, text="📂 Открыть папку", command=self.open_results_folder).pack(side="left", fill="x", expand=True, padx=(0,4))
+        ttk.Button(row_exp2, text="📊 Открыть Excel", command=self.open_excel).pack(side="left", fill="x", expand=True, padx=(4,0))
+        self.export_status=ttk.Label(export_frame, text="", font=("Segoe UI",7), foreground="#15803d")
+        self.export_status.pack(anchor="w", pady=(4,0))
+
         # Статистика токенов
         ttk.Separator(left).pack(fill="x", pady=8)
         hdr=ttk.Frame(left)
@@ -328,6 +343,118 @@ class App(tk.Tk):
             vals=self.tree.item(sel[0])["values"]
             self.clipboard_clear(); self.clipboard_append(vals[0])
             self.log(f"Скопирован ИНН {vals[0]}")
+
+    def rebuild_excel(self):
+        """Пересобрать Excel из уже имеющегося JSONL — без повторного парсинга."""
+        input_path=self.input_var.get().strip()
+        output_path=self.output_var.get().strip()
+        if not input_path or not pathlib.Path(input_path).exists():
+            messagebox.showwarning("Файл", "Выберите исходный реестр (Откуда ИНН)")
+            return
+        if not output_path:
+            messagebox.showwarning("Файл", "Укажите куда сохранить (Куда сохрани)")
+            return
+        self.log(f"🔄 Пересборка Excel из JSONL: {input_path} → {output_path}")
+        self.export_status.config(text="⏳ Пересборка...")
+        def do():
+            try:
+                from ..storage import Storage
+                from ..worker import enrich_excel, save_fallback_csv
+                storage=Storage(self.cfg["storage"]["raw_jsonl"], self.cfg["storage"]["sqlite_path"], self.cfg["storage"]["log_path"], self.cfg["storage"].get("daily_token_log"))
+                results=storage.load_all_records()
+                if not results:
+                    self.log("❌ JSONL пустой — парсинг ещё не запускался или файл data/dadata_raw.jsonl пуст")
+                    self.after(0, lambda: self.export_status.config(text="❌ JSONL пустой"))
+                    return
+                self.log(f"  Загружено {len(results)} записей из {storage.raw_jsonl}")
+                real_out=enrich_excel(input_path, output_path, results)
+                sz=pathlib.Path(real_out).stat().st_size/1024/1024
+                self.log(f"✅ Excel пересобран: {real_out} ({sz:.2f} МБ)")
+                self.after(0, lambda: self.export_status.config(text=f"✅ {pathlib.Path(real_out).name} ({sz:.2f} МБ)"))
+                messagebox.showinfo("Готово", f"Excel пересобран:\n{real_out}\n\nРазмер: {sz:.2f} МБ\nЗаписей: {len(results)}")
+            except Exception as e:
+                import traceback
+                self.log(f"❌ Ошибка пересборки: {e}")
+                self.log(traceback.format_exc())
+                self.after(0, lambda: self.export_status.config(text=f"❌ {e}"))
+                messagebox.showerror("Ошибка", f"Не удалось пересобрать Excel:\n{e}\n\nПопробуйте короткую папку: C:/temp/out.xlsx")
+        threading.Thread(target=do, daemon=True).start()
+
+    def export_csv(self):
+        """Выгрузить CSV из JSONL."""
+        output_path=self.output_var.get().strip()
+        if not output_path:
+            p=filedialog.asksaveasfilename(title="Куда сохранить CSV", defaultextension=".csv", filetypes=[("CSV","*.csv")])
+            if not p: return
+            output_path=p
+            self.output_var.set(output_path)
+        csv_path=pathlib.Path(output_path).with_suffix(".csv")
+        self.log(f"📄 Выгрузка CSV: → {csv_path}")
+        self.export_status.config(text="⏳ Выгрузка CSV...")
+        def do():
+            try:
+                from ..storage import Storage
+                from ..worker import save_fallback_csv
+                storage=Storage(self.cfg["storage"]["raw_jsonl"], self.cfg["storage"]["sqlite_path"], self.cfg["storage"]["log_path"], self.cfg["storage"].get("daily_token_log"))
+                results=storage.load_all_records()
+                if not results:
+                    self.log("❌ JSONL пустой — нечего выгружать")
+                    self.after(0, lambda: self.export_status.config(text="❌ JSONL пустой"))
+                    return
+                save_fallback_csv(results, csv_path)
+                sz=csv_path.stat().st_size/1024
+                self.log(f"✅ CSV выгружен: {csv_path} ({sz:.1f} КБ, {len(results)} записей)")
+                self.after(0, lambda: self.export_status.config(text=f"✅ CSV {csv_path.name} ({sz:.1f} КБ)"))
+                messagebox.showinfo("Готово", f"CSV выгружен:\n{csv_path}\n\nЗаписей: {len(results)}")
+            except Exception as e:
+                import traceback
+                self.log(f"❌ Ошибка CSV: {e}")
+                self.log(traceback.format_exc())
+                self.after(0, lambda: self.export_status.config(text=f"❌ {e}"))
+        threading.Thread(target=do, daemon=True).start()
+
+    def open_results_folder(self):
+        import subprocess
+        # приоритет — папка куда сохрани
+        out=self.output_var.get().strip()
+        folder=pathlib.Path(out).parent if out else pathlib.Path(self.cfg["storage"]["raw_jsonl"]).parent
+        if not folder.exists():
+            folder=pathlib.Path(self.cfg["storage"]["raw_jsonl"]).parent
+        try:
+            if sys.platform=="win32":
+                import os; os.startfile(str(folder))
+            elif sys.platform=="darwin":
+                subprocess.Popen(["open", str(folder)])
+            else:
+                subprocess.Popen(["xdg-open", str(folder)])
+            self.log(f"📂 Открыта папка: {folder}")
+        except Exception as e:
+            self.log(f"Не удалось открыть папку: {e}")
+            messagebox.showinfo("Папка", str(folder))
+
+    def open_excel(self):
+        out=self.output_var.get().strip()
+        p=pathlib.Path(out)
+        if not p.exists():
+            # пробуем обогащённый рядом с входным
+            inp=self.input_var.get().strip()
+            if inp:
+                cand=pathlib.Path(inp).parent / f"{pathlib.Path(inp).stem}_обогащен_DaData.xlsx"
+                if cand.exists():
+                    p=cand
+            if not p.exists():
+                messagebox.showwarning("Файл не найден", f"Файл не найден:\n{p}\n\nСначала пересоберите Excel или запустите парсинг.")
+                return
+        try:
+            if sys.platform=="win32":
+                import os; os.startfile(str(p))
+            else:
+                import subprocess, sys as _sys
+                if _sys.platform=="darwin": subprocess.Popen(["open", str(p)])
+                else: subprocess.Popen(["xdg-open", str(p)])
+            self.log(f"📊 Открыт Excel: {p}")
+        except Exception as e:
+            messagebox.showinfo("Открыть Excel", str(p))
 
     def save_config(self):
         tokens=[t.strip() for t in self.tokens_text.get("1.0","end").splitlines() if t.strip() and not t.strip().startswith("#")]
