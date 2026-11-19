@@ -482,8 +482,25 @@ class App(tk.Tk):
                 self.log("Всё уже запрошено — собираю Excel")
                 if input_path.lower().endswith((".xlsx",".xls")) and output_path:
                     from ..worker import enrich_excel
-                    enrich_excel(input_path, output_path, storage.load_all_records())
-                    self.log(f"✅ Excel: {output_path}")
+                    import pathlib as _pl
+                    try:
+                        out=str(_pl.Path(output_path).resolve())
+                        self.log(f"📊 Собираю Excel: {input_path} -> {out}")
+                        real_out=enrich_excel(input_path, output_path, storage.load_all_records())
+                        self.log(f"✅ Excel сохранён: {real_out}")
+                        self.log(f"   Откройте: {real_out}")
+                    except Exception as e:
+                        import traceback as _tb
+                        self.log(f"❌ Ошибка создания Excel: {e}")
+                        self.log(_tb.format_exc())
+                        # fallback CSV
+                        try:
+                            from ..worker import save_fallback_csv
+                            csv_path=_pl.Path(output_path).with_suffix(".csv")
+                            save_fallback_csv(storage.load_all_records(), csv_path)
+                            self.log(f"⚠️ Создан CSV fallback: {csv_path.resolve()}")
+                        except Exception as ee:
+                            self.log(f"CSV fallback тоже не удался: {ee}")
                 self.finish(True); return
             done=0
             for inn in to_query:
@@ -517,8 +534,33 @@ class App(tk.Tk):
             if input_path.lower().endswith((".xlsx",".xls")) and output_path:
                 self.log("📊 Собираю Excel...")
                 from ..worker import enrich_excel
-                enrich_excel(input_path, output_path, storage.load_all_records())
-                self.log(f"✅ Готово: {output_path}")
+                import pathlib as _pl
+                try:
+                    out=str(_pl.Path(output_path).resolve())
+                    self.log(f"   {input_path} -> {out}")
+                    real_out=enrich_excel(input_path, output_path, storage.load_all_records())
+                    self.log(f"✅ Готово: {real_out}")
+                    self.log(f"   Папка: {_pl.Path(real_out).parent}")
+                    # автопроверка
+                    if _pl.Path(real_out).exists():
+                        sz=_pl.Path(real_out).stat().st_size/1024/1024
+                        self.log(f"   Размер: {sz:.2f} МБ — откройте в Excel")
+                    else:
+                        self.log(f"❌ Файл не найден после сохранения! Проверьте права к папке { _pl.Path(real_out).parent }")
+                except Exception as e:
+                    import traceback as _tb
+                    self.log(f"❌ Ошибка создания Excel: {e}")
+                    self.log(_tb.format_exc())
+                    self.log("⚠️ Пробую сохранить CSV из тех же данных...")
+                    try:
+                        from ..worker import save_fallback_csv
+                        csv_path=_pl.Path(output_path).with_suffix(".csv")
+                        save_fallback_csv(storage.load_all_records(), csv_path)
+                        self.log(f"✅ CSV fallback сохранён: {csv_path.resolve()} ({csv_path.stat().st_size/1024:.1f} КБ)")
+                        messagebox.showwarning("Excel не создался", f"Excel не создался: {e}\n\nНо CSV с теми же данными сохранён:\n{csv_path.resolve()}\n\nТакже все данные в JSONL:\n{storage.raw_jsonl.resolve()}\n\nЗапустите 'python -m dadata_parser --input ...' для пересборки.")
+                    except Exception as ee:
+                        self.log(f"❌ CSV fallback тоже failed: {ee}")
+                        self.log(_tb.format_exc())
                 self.log(f"   Лог: {self.cfg['storage']['log_path']}")
                 self.log(f"   JSONL: {self.cfg['storage']['raw_jsonl']}")
             self.log(f"🏁 Завершено: {done} done, {self._found} найдено")
