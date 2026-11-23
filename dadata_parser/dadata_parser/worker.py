@@ -13,7 +13,6 @@ from openpyxl.utils import get_column_letter
 from .config import masked_token
 from .token_manager import AllTokensExhausted
 from .storage import Storage
-from .providers.dop_okved import create_provider as create_dop_provider
 
 try:
     from tqdm import tqdm
@@ -364,35 +363,6 @@ class Worker:
         stats=self.tm.get_stats(); used,limit=self.tm.get_total_today()
         self.logger.info(f"Готово парсинг: done={done} found={found} errors={errors} | {self.tm.format_status()} | всего {used}/{limit}")
         self.storage.log_token_daily(stats, used, limit)
-
-        # --- Доп ОКВЭДы (ФНС) — второй проход, если включен ---
-        dop_cfg=self.cfg.get("dop_okved", {})
-        if dop_cfg.get("enabled"):
-            self.logger.info(f"Доп ОКВЭДы: включен провайдер {dop_cfg.get('provider')} delay={dop_cfg.get('delay')}s")
-            provider=create_dop_provider(self.cfg, self.client.pm if hasattr(self.client, 'pm') else None)
-            # собираем ИНН для дозапроса: все успешно найденные, у которых еще нет dop
-            dop_existing=self.storage.get_dop_map()
-            inns_for_dop=[i for i in inns if i not in dop_existing or not dop_existing.get(i)]
-            # если много — можно ограничить, но делаем все
-            self.logger.info(f"Доп ОКВЭДы: нужно запросить {len(inns_for_dop)} из {len(inns)} (остальные уже есть)")
-            if inns_for_dop:
-                import time as _t
-                dop_done=0
-                for inn in inns_for_dop:
-                    # пауза/продолжение — если_worker остановлен, выходим с сохранением прогресса
-                    # (is_running проверяется в GUI worker, здесь просто делаем)
-                    try:
-                        dop_codes=provider.fetch_dop_okveds(inn)
-                    except Exception as e:
-                        self.logger.debug(f"dop {inn} err {e}")
-                        dop_codes=[]
-                    # сохраняем даже если пусто (чтобы не запрашивать второй раз)
-                    self.storage.append_record(inn, "dop_okved", {"inn": inn, "http_status": 200, "data": {}}, extra={"dop_okveds": dop_codes, "dop_okved_source": dop_cfg.get("provider")})
-                    dop_done+=1
-                    if dop_done % 50 == 0:
-                        self.logger.info(f"Доп ОКВЭДы прогресс {dop_done}/{len(inns_for_dop)}")
-                self.logger.info(f"Доп ОКВЭДы готово: {dop_done} ИНН, сохранено в {self.storage.raw_jsonl}")
-
         if output_path and input_path and str(input_path).lower().endswith((".xlsx",".xls")):
             results=self.storage.load_all_records()
             try:

@@ -188,14 +188,6 @@ class App(tk.Tk):
         self.stop_btn.pack(fill="x", pady=(4,0))
         ttk.Label(left, text="Resume: при повторе продолжит с места (JSONL). Лимит 10к/сутки — переключает токен сам.", font=("Segoe UI",7), foreground="#888").pack(anchor="w", pady=(4,0))
 
-        # Доп ОКВЭДы
-        dop_frame=ttk.Frame(left)
-        dop_frame.pack(fill="x", pady=(6,0))
-        self.dop_enabled=tk.BooleanVar(value=self.cfg.get("dop_okved",{}).get("enabled", False))
-        ttk.Checkbutton(dop_frame, text="Дозапросить доп. ОКВЭДы из ФНС ЕГРЮЛ", variable=self.dop_enabled, command=self.toggle_dop).pack(side="left")
-        ttk.Label(dop_frame, text=f"({self.cfg.get('dop_okved',{}).get('provider','egrul_nalog')}, ~1 r/s)", font=("Segoe UI",7), foreground="#888").pack(side="left", padx=(6,0))
-        ttk.Label(left, text="После основного парсинга — второй проход по ФНС, сохраняет в тот же JSONL. Можно ставить на паузу.", font=("Segoe UI",7), foreground="#666", wraplength=420).pack(anchor="w")
-
         # Выгрузка / Пересборка — прямо в GUI
         export_frame=ttk.LabelFrame(left, text=" 📤 Выгрузка и пересборка ", padding=8)
         export_frame.pack(fill="x", pady=(10,2))
@@ -210,21 +202,6 @@ class App(tk.Tk):
         ttk.Button(row_exp2, text="📊 Открыть Excel", command=self.open_excel).pack(side="left", fill="x", expand=True, padx=(4,0))
         self.export_status=ttk.Label(export_frame, text="", font=("Segoe UI",7), foreground="#15803d")
         self.export_status.pack(anchor="w", pady=(4,0))
-
-        # Задание — экспорт/импорт для переноса между версиями
-        task_frame=ttk.LabelFrame(left, text=" 📋 Задание — перенос на другой ПК/версию ", padding=8)
-        task_frame.pack(fill="x", pady=(8,0))
-        ttk.Label(task_frame, text="Сохраните прогресс в 1 файл и продолжите на другом компьютере:", font=("Segoe UI",7), foreground="#666", wraplength=420).pack(anchor="w")
-        row_task1=ttk.Frame(task_frame)
-        row_task1.pack(fill="x", pady=(6,2))
-        ttk.Button(row_task1, text="💾 Экспорт задания (.json)", command=self.export_task).pack(side="left", fill="x", expand=True, padx=(0,4))
-        ttk.Button(row_task1, text="📦 Экспорт задания (.zip + JSONL)", command=self.export_task_zip).pack(side="left", fill="x", expand=True, padx=(4,0))
-        row_task2=ttk.Frame(task_frame)
-        row_task2.pack(fill="x", pady=2)
-        ttk.Button(row_task2, text="📂 Импорт задания", command=self.import_task).pack(side="left", fill="x", expand=True, padx=(0,4))
-        ttk.Button(row_task2, text="⏸ Пауза/Продолжить", command=self.toggle_pause).pack(side="left", fill="x", expand=True, padx=(4,0))
-        self.task_status=ttk.Label(task_frame, text="Прогресс сохраняется после каждого запроса — можно закрыть и продолжить позже", font=("Segoe UI",7), foreground="#15803d")
-        self.task_status.pack(anchor="w", pady=(4,0))
 
         # Статистика токенов
         ttk.Separator(left).pack(fill="x", pady=8)
@@ -332,103 +309,6 @@ class App(tk.Tk):
         state="normal" if self.proxy_enabled.get() else "disabled"
         try: self.proxy_text.configure(state=state)
         except: pass
-
-    def toggle_dop(self):
-        self.cfg.setdefault("dop_okved", {})["enabled"]=bool(self.dop_enabled.get())
-        from ..config import save_config
-        save_config(self.cfg)
-        self.log(f"{'✅' if self.dop_enabled.get() else '⏸'} Доп ОКВЭДы: {'включено' if self.dop_enabled.get() else 'выключено'}")
-
-    def export_task(self):
-        p=filedialog.asksaveasfilename(title="Экспорт задания", defaultextension=".dtask.json", filetypes=[("Task","*.dtask.json"),("JSON","*.json")], initialfile=pathlib.Path(self.input_var.get() or "task").stem+".dtask.json")
-        if not p: return
-        try:
-            from ..task_manager import TaskManager
-            from ..storage import Storage
-            storage=Storage(self.cfg["storage"]["raw_jsonl"], self.cfg["storage"]["sqlite_path"], self.cfg["storage"]["log_path"], self.cfg["storage"].get("daily_token_log"))
-            tmgr=TaskManager(self.cfg, storage)
-            # inns берем из входного файла или из JSONL
-            from ..worker import load_inns_from_input
-            inp=self.input_var.get().strip()
-            inns=None
-            if inp and pathlib.Path(inp).exists():
-                try: inns=load_inns_from_input(inp)
-                except: inns=None
-            path=tmgr.export_task_json(p, inns=inns, source_file=inp or None, output_file=self.output_var.get() or None)
-            self.task_status.config(text=f"✅ {pathlib.Path(path).name}")
-            self.log(f"Экспортировано задание: {path}")
-            messagebox.showinfo("Готово", f"Задание сохранено:\n{path}\n\nСкопируйте этот файл + data/dadata_raw.jsonl на новый ПК и импортируйте.")
-        except Exception as e:
-            import traceback; self.log(f"❌ {e}\n{traceback.format_exc()}")
-
-    def export_task_zip(self):
-        p=filedialog.asksaveasfilename(title="Экспорт ZIP", defaultextension=".zip", filetypes=[("ZIP","*.zip")], initialfile=pathlib.Path(self.input_var.get() or "task").stem+".zip")
-        if not p: return
-        try:
-            from ..task_manager import TaskManager
-            from ..storage import Storage
-            storage=Storage(self.cfg["storage"]["raw_jsonl"], self.cfg["storage"]["sqlite_path"], self.cfg["storage"]["log_path"], self.cfg["storage"].get("daily_token_log"))
-            tmgr=TaskManager(self.cfg, storage)
-            from ..worker import load_inns_from_input
-            inp=self.input_var.get().strip()
-            inns=None
-            if inp and pathlib.Path(inp).exists():
-                try: inns=load_inns_from_input(inp)
-                except: pass
-            path=tmgr.export_task_zip(p, inns=inns, source_file=inp or None, output_file=self.output_var.get() or None)
-            sz=pathlib.Path(path).stat().st_size/1024/1024
-            self.task_status.config(text=f"✅ ZIP {sz:.1f} МБ")
-            self.log(f"ZIP задание: {path} ({sz:.2f} МБ)")
-        except Exception as e:
-            import traceback; self.log(f"❌ {e}\n{traceback.format_exc()}")
-
-    def import_task(self):
-        p=filedialog.askopenfilename(title="Импорт задания", filetypes=[("Task","*.dtask.json *.zip"),("JSON","*.dtask.json"),("ZIP","*.zip")])
-        if not p: return
-        try:
-            from ..task_manager import TaskManager
-            from ..storage import Storage
-            storage=Storage(self.cfg["storage"]["raw_jsonl"], self.cfg["storage"]["sqlite_path"], self.cfg["storage"]["log_path"], self.cfg["storage"].get("daily_token_log"))
-            tmgr=TaskManager(self.cfg, storage)
-            if p.endswith(".zip"):
-                res=tmgr.import_task_zip(p)
-                # применяем config
-                if res.get("config"):
-                    self.cfg=res["config"]
-                    self.input_var.set(res.get("source_file") or self.input_var.get())
-                    self.output_var.set(res.get("output_file") or self.output_var.get())
-                    self.dop_enabled.set(self.cfg.get("dop_okved",{}).get("enabled", False))
-                    from ..config import save_config; save_config(self.cfg)
-                self.task_status.config(text=f"✅ Импорт ZIP: {res.get('inns_total')} ИНН")
-                self.log(f"Импортировано ZIP задание: {p} → прогрес {len(storage.load_existing_inns())} готово")
-                messagebox.showinfo("Готово", f"Импортировано: {p}\nВсего ИНН: {res.get('inns_total')}\nГотово: {len(storage.load_existing_inns())}\nНажмите Запустить для продолжения.")
-            else:
-                res=tmgr.import_task_json(p)
-                if res.get("config"):
-                    self.cfg=res["config"]
-                    self.input_var.set(res.get("source_file") or self.input_var.get())
-                    self.output_var.set(res.get("output_file") or self.output_var.get())
-                    self.dop_enabled.set(self.cfg.get("dop_okved",{}).get("enabled", False))
-                    from ..config import save_config; save_config(self.cfg)
-                self.task_status.config(text=f"✅ Импорт {pathlib.Path(p).name}")
-                self.log(f"Импортировано задание: {p} total={res.get('inns_total')}")
-                messagebox.showinfo("Готово", f"Импортировано задание: {res.get('inns_total')} ИНН\n{res.get('source_file')}")
-        except Exception as e:
-            import traceback; self.log(f"❌ Импорт: {e}\n{traceback.format_exc()}")
-
-    def toggle_pause(self):
-        if getattr(self, "_paused", False):
-            self._paused=False
-            self._resume_event.set()
-            self.log("▶ Продолжено")
-            self.task_status.config(text="▶ Продолжено")
-        else:
-            self._paused=True
-            if not hasattr(self, "_resume_event"):
-                import threading; self._resume_event=threading.Event(); self._resume_event.set()
-            self._resume_event.clear()
-            self.log("⏸ Пауза — текущий запрос завершится, затем остановка")
-            self.task_status.config(text="⏸ На паузе (жмём ещё раз — продолжить)")
 
     def log(self, msg):
         self.log_queue.put(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
@@ -680,20 +560,11 @@ class App(tk.Tk):
         for i in self.tree.get_children(): self.tree.delete(i)
         self.log_text.delete("1.0","end")
         self.log(f"▶ Старт: {input_path}")
-        if not hasattr(self, "_resume_event"):
-            import threading
-            self._resume_event=threading.Event()
-            self._resume_event.set()
-        else:
-            self._resume_event.set()
-        self._paused=False
         self.worker_thread=threading.Thread(target=self.worker, daemon=True)
         self.worker_thread.start()
 
     def stop(self):
         self.is_running=False
-        if hasattr(self, "_resume_event"):
-            self._resume_event.set()
         self.log("⏸ Останавливаю после текущего запроса...")
         self.stat_status.config(text="Останавливается...")
 
@@ -763,9 +634,6 @@ class App(tk.Tk):
                 if not self.is_running:
                     self.log("⏹ Остановлено пользователем")
                     break
-                # пауза
-                if hasattr(self, "_resume_event"):
-                    self._resume_event.wait()
                 resp, token=client.query_one(inn)
                 if resp.get("http_status")==200:
                     tm.record_usage(token, inn=inn, http_status=200, note="ok")

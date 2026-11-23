@@ -67,13 +67,6 @@ def _normalize(cfg: dict) -> dict:
     cfg["output"].setdefault("excel_output", "./data/enriched.xlsx")
     cfg["output"].setdefault("save_raw_jsonl", True)
 
-    cfg.setdefault("dop_okved", {})
-    cfg["dop_okved"].setdefault("enabled", False)
-    cfg["dop_okved"].setdefault("provider", "egrul_nalog")
-    cfg["dop_okved"].setdefault("delay", 1.0)
-    cfg["dop_okved"].setdefault("timeout", 15)
-    cfg["dop_okved"].setdefault("verify_ssl", True)
-
     cfg.setdefault("logging", {})
     cfg["logging"].setdefault("level", "INFO")
     cfg["logging"].setdefault("console_every_n", 50)
