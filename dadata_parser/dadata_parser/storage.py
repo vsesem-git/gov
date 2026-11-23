@@ -61,7 +61,7 @@ class Storage:
                     continue
         return inns
 
-    def append_record(self, inn: str, token_masked: str, response: dict, queried_at: str | None = None):
+    def append_record(self, inn: str, token_masked: str, response: dict, queried_at: str | None = None, extra: dict | None = None):
         if queried_at is None:
             queried_at = datetime.now(TZ_MSK).isoformat()
         record = {
@@ -70,14 +70,39 @@ class Storage:
             "token_masked": token_masked,
             "response": response
         }
+        if extra:
+            record.update(extra)
+        with open(self.raw_jsonl, "a", encoding="utf-8") as f:
+            f.write(json.dumps(record, ensure_ascii=False) + "\n")
+        # также flush fsync для надёжной паузы/переноса
+        try:
+            import os
+            # файл уже закрыт, открываем заново для fsync? не нужно — уже записано
+            pass
+        except: pass
+
+    def update_record_dop(self, inn: str, dop_okveds: list[str]):
+        """Дописывает доп ОКВЭДы к уже существующей записи (перезапись JSONL через append — последний выигрывает)."""
+        inns = self.load_existing_inns()
+        # просто дописываем новую запись с тем же inn но с полем dop_okveds
+        # load_all_records берёт последний, поэтому это работает как update
+        record = {
+            "inn": str(inn).strip(),
+            "queried_at": datetime.now(TZ_MSK).isoformat(),
+            "token_masked": "dop_okved",
+            "response": {"inn": str(inn).strip(), "http_status": 200, "data": {"suggestions": []}},
+            "dop_okveds": dop_okveds,
+            "dop_okved_source": "egrul_nalog",
+        }
         with open(self.raw_jsonl, "a", encoding="utf-8") as f:
             f.write(json.dumps(record, ensure_ascii=False) + "\n")
 
     def load_all_records(self) -> dict[str, dict]:
-        """Возвращает dict inn -> response (последний)."""
+        """Возвращает dict inn -> response (последний). Мерджит доп ОКВЭДы если есть."""
         if not self.raw_jsonl.exists():
             return {}
         out = {}
+        dop_map: dict[str, list[str]] = {}
         with open(self.raw_jsonl, "r", encoding="utf-8") as f:
             for line in f:
                 line=line.strip()
@@ -85,10 +110,41 @@ class Storage:
                     continue
                 try:
                     obj=json.loads(line)
-                    out[str(obj["inn"]).strip()] = obj["response"]
+                    inn=str(obj["inn"]).strip()
+                    if "dop_okveds" in obj:
+                        dop_map[inn] = obj.get("dop_okveds") or []
+                    if "response" in obj:
+                        out[inn] = obj["response"]
+                        # если в том же объекте есть dop — сохранить
+                        if obj.get("dop_okveds"):
+                            dop_map[inn] = obj["dop_okveds"]
                 except:
                     continue
+        # прикрепить доп к response для удобства (поле _dop_okveds в data)
+        for inn, dop in dop_map.items():
+            if inn in out and isinstance(out[inn], dict):
+                # клонируем чтобы не мутировать оригинал слишком сильно
+                try:
+                    out[inn] = dict(out[inn])
+                    out[inn]["_dop_okveds"] = dop
+                except: pass
         return out
+
+    def get_dop_map(self) -> dict[str, list[str]]:
+        """Только доп ОКВЭДы inn -> list[codes]."""
+        if not self.raw_jsonl.exists():
+            return {}
+        m={}
+        with open(self.raw_jsonl, "r", encoding="utf-8") as f:
+            for line in f:
+                line=line.strip()
+                if not line: continue
+                try:
+                    obj=json.loads(line)
+                    if "dop_okveds" in obj and obj.get("dop_okveds") is not None:
+                        m[str(obj["inn"]).strip()] = obj["dop_okveds"]
+                except: continue
+        return m
 
     def log_token_daily(self, stats: list[dict], total_used: int, total_limit: int):
         """Пишет ежедневный файл token_usage_{date}.log"""

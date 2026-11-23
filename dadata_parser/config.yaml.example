@@ -39,6 +39,13 @@ output:
   excel_output: "./data/enriched.xlsx"
   save_raw_jsonl: true
 
+dop_okved:
+  enabled: false               # true — дозагружать доп. ОКВЭДы из ФНС ЕГРЮЛ
+  provider: "egrul_nalog"      # egrul_nalog (бесплатно, 1 r/s)
+  delay: 1.0                   # пауза между запросами ФНС
+  timeout: 15
+  verify_ssl: true
+
 logging:
   level: "INFO"                # DEBUG | INFO | WARNING
   console_every_n: 50           # печать прогресса каждые N запросов
