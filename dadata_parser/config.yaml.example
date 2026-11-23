@@ -1,0 +1,52 @@
+# Dadata Parser — пример конфигурации
+# Скопируйте в config.yaml и заполните своими данными:
+#   cp config.yaml.example config.yaml
+
+dadata:
+  tokens:
+    - "77eff8edd3640fc0002ad6ae2431261a2f382dfb"
+    # - "второй_токен_если_есть"
+    # - "третий_токен"
+  daily_limit_per_token: 10000
+  timeout: 15
+  retries: 3
+  delay_between_requests: 0.2   # сек между запросами (0.15-0.2 = 5-6 r/s, защита от 429)
+  retry_backoff_base: 1.5
+  handle_429_pause: 2.0         # базовая пауза при 429, сек (умножается на attempt)
+
+proxy:
+  enabled: true
+  # Формат: IP:PORT:LOGIN:PASS  или IP:PORT;LOGIN:PASS
+  # Пример из ТЗ: 95.78.126.13:14755:5nqb8nr:9cz93bt
+  list:
+    - "95.78.126.13:14755:5nqb8nr:9cz93bt"
+  rotation: "round_robin"      # round_robin | random | sticky
+  verify_ssl: true
+  test_url: "https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party"
+  # Если прокси с авторотацией — достаточно 1 записи
+
+storage:
+  dir: "./data"
+  sqlite_path: "./data/parser.db"
+  raw_jsonl: "./data/dadata_raw.jsonl"
+  log_path: "./data/parser.log"
+  # Ежедневный лог расхода токенов
+  daily_token_log: "./data/token_usage_{date}.log"
+
+output:
+  # Для обогащения Excel (опционально) — путь к входному реестру
+  excel_input: null
+  excel_output: "./data/enriched.xlsx"
+  save_raw_jsonl: true
+
+dop_okved:
+  enabled: false               # true — дозагружать доп. ОКВЭДы из ФНС ЕГРЮЛ
+  provider: "egrul_nalog"      # egrul_nalog (бесплатно, 1 r/s)
+  delay: 1.0                   # пауза между запросами ФНС
+  timeout: 15
+  verify_ssl: true
+
+logging:
+  level: "INFO"                # DEBUG | INFO | WARNING
+  console_every_n: 50           # печать прогресса каждые N запросов
+  max_log_file_mb: 20
