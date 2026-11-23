@@ -425,7 +425,7 @@ class App(tk.Tk):
         else:
             self._paused=True
             if not hasattr(self, "_resume_event"):
-                import threading; self._resume_event=threading.Event(); self._resume_event.set()
+                self._resume_event=threading.Event(); self._resume_event.set()
             self._resume_event.clear()
             self.log("⏸ Пауза — текущий запрос завершится, затем остановка")
             self.task_status.config(text="⏸ На паузе (жмём ещё раз — продолжить)")
@@ -681,7 +681,6 @@ class App(tk.Tk):
         self.log_text.delete("1.0","end")
         self.log(f"▶ Старт: {input_path}")
         if not hasattr(self, "_resume_event"):
-            import threading
             self._resume_event=threading.Event()
             self._resume_event.set()
         else:
@@ -735,7 +734,30 @@ class App(tk.Tk):
             to_query=[i for i in inns if i not in existing]
             self.log(f"К запросу: {len(to_query)} (уже готово {len(existing)} — resume)")
             if not to_query:
-                self.log("Всё уже запрошено — собираю Excel")
+                self.log("Всё уже запрошено — проверяю доп. ОКВЭДы")
+                if self.dop_enabled.get():
+                    try:
+                        from ..providers.dop_okved import create_provider as create_dop_provider
+                        self.cfg.setdefault("dop_okved", {})["enabled"]=True
+                        provider=create_dop_provider(self.cfg, pm)
+                        dop_existing=storage.get_dop_map() if hasattr(storage, "get_dop_map") else {}
+                        inns_for_dop=[i for i in inns if i not in dop_existing or not dop_existing.get(i)]
+                        if inns_for_dop:
+                            self.log(f"Доп ОКВЭДы: нужно {len(inns_for_dop)} из {len(inns)} (egrul.nalog.ru ~1 r/s)")
+                            dop_done=0
+                            for inn in inns_for_dop:
+                                if not self.is_running: break
+                                if hasattr(self, "_resume_event"): self._resume_event.wait()
+                                try: dop_codes=provider.fetch_dop_okveds(inn)
+                                except Exception as e:
+                                    self.log(f"dop {inn} err {e}"); dop_codes=[]
+                                storage.append_record(inn, "dop_okved", {"inn": inn, "http_status": 200, "data": {}}, extra={"dop_okveds": dop_codes, "dop_okved_source": self.cfg.get("dop_okved",{}).get("provider","egrul_nalog")})
+                                dop_done+=1
+                                if dop_done % 50==0: self.log(f"Доп ОКВЭДы {dop_done}/{len(inns_for_dop)}")
+                            self.log(f"Доп ОКВЭДы готово: {dop_done}")
+                    except Exception as e:
+                        import traceback; self.log(f"Доп ОКВЭДы ошибка: {e}\n{traceback.format_exc()}")
+                self.log("Собираю Excel")
                 if input_path.lower().endswith((".xlsx",".xls")) and output_path:
                     from ..worker import enrich_excel
                     import pathlib as _pl
@@ -790,6 +812,29 @@ class App(tk.Tk):
                     self.log(f"⋯ {done+1}/{len(to_query)} | {tm.format_status()}")
                 done+=1
                 if client.delay>0: sleep_wrap(client.delay)
+            # --- Доп ОКВЭДы (ФНС) — второй проход, если чекбокс включён ---
+            if self.dop_enabled.get():
+                try:
+                    from ..providers.dop_okved import create_provider as create_dop_provider
+                    self.cfg.setdefault("dop_okved", {})["enabled"]=True
+                    provider=create_dop_provider(self.cfg, pm)
+                    dop_existing=storage.get_dop_map() if hasattr(storage, "get_dop_map") else {}
+                    inns_for_dop=[i for i in inns if i not in dop_existing or not dop_existing.get(i)]
+                    if inns_for_dop:
+                        self.log(f"Доп ОКВЭДы: старт {len(inns_for_dop)} ИНН (egrul.nalog.ru ~1 r/s, пауза работает)")
+                        dop_done=0
+                        for inn in inns_for_dop:
+                            if not self.is_running: break
+                            if hasattr(self, "_resume_event"): self._resume_event.wait()
+                            try: dop_codes=provider.fetch_dop_okveds(inn)
+                            except Exception as e:
+                                self.log(f"dop {inn} err {e}"); dop_codes=[]
+                            storage.append_record(inn, "dop_okved", {"inn": inn, "http_status": 200, "data": {}}, extra={"dop_okveds": dop_codes, "dop_okved_source": self.cfg.get("dop_okved",{}).get("provider","egrul_nalog")})
+                            dop_done+=1
+                            if dop_done % 50==0: self.log(f"Доп ОКВЭДы {dop_done}/{len(inns_for_dop)}")
+                        self.log(f"Доп ОКВЭДы готово: {dop_done}")
+                except Exception as e:
+                    import traceback; self.log(f"Доп ОКВЭДы ошибка: {e}\n{traceback.format_exc()}")
             if input_path.lower().endswith((".xlsx",".xls")) and output_path:
                 self.log("📊 Собираю Excel...")
                 from ..worker import enrich_excel
